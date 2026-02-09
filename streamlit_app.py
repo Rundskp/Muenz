@@ -1,105 +1,108 @@
 import streamlit as st
 import google.generativeai as genai
-from PIL import Image
+from PIL import Image, ImageEnhance
 import io
 import json
 import collections
 
 # --- SETUP ---
-st.set_page_config(page_title="MuenzID Pro", layout="centered")
-st.title("🪙 Münz-Detektiv: Experten-Modus")
+st.set_page_config(page_title="MuenzID Pro - Ultra", layout="centered")
+st.title("🪙 Münz-Detektiv: Experten-Modus 2.0")
 
-# API-Key Check
 if "GOOGLE_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    # Wir nutzen deine funktionierende Basis: gemini-2.5-flash
     model = genai.GenerativeModel('gemini-2.5-flash')
 else:
-    st.error("🔑 API-Key fehlt in den Secrets!")
+    st.error("🔑 API-Key fehlt!")
     st.stop()
 
-# --- UPLOAD ---
+# --- BILD-VERARBEITUNG ---
 uploaded_file = st.file_uploader("Münzbild hochladen", type=["jpg", "jpeg", "png"])
 
 if uploaded_file:
     img = Image.open(uploaded_file)
-    st.image(img, caption="Deine Münze", use_container_width=True)
+    
+    # Automatische Bildverbesserung für die KI (Kontrast & Schärfe)
+    enhancer = ImageEnhance.Contrast(img)
+    enhanced_img = enhancer.enhance(1.5) 
+    
+    st.image(img, caption="Originalbild", use_container_width=True)
 
-    if st.button("Münze präzise analysieren"):
+    if st.button("Präzise Konsens-Analyse (5-fach Check)"):
         results_pool = []
-        found_consensus = False
-        max_tries = 5 # Maximal 5 Anfragen, um Kosten/Zeit zu sparen
-
-        with st.spinner("Suche nach mehrmaliger Übereinstimmung (Konsens-Prüfung)..."):
+        max_tries = 5
+        
+        with st.spinner("KI-Abgleich läuft... Ich suche nach Übereinstimmungen."):
             status_area = st.empty()
             
             for i in range(max_tries):
-                status_area.text(f"Durchgang {i+1}: Analysiere Details...")
+                status_area.text(f"Versuch {i+1} von {max_attempts}...")
                 
-                # Strenger Prompt für minimales "Blabla" und JSON-Struktur
+                # Prompt mit Fokus auf Identifikation statt "Blabla"
                 prompt = """
-                Verhalte dich wie ein präziser Numismatiker. Antworte NUR im JSON-Format:
+                Numismatische Analyse. Antworte NUR im JSON-Format:
                 {
                   "Land": "Name",
                   "Einheit": "z.B. Dukat",
                   "Herrscher": "Name",
-                  "Jahr": "Exaktes Jahr oder Epoche",
-                  "Wert": "Schätzwert in Euro",
-                  "Motiv_Details": "Was ist exakt zu sehen?",
-                  "Link": "URL zu Numista oder ähnlicher Referenz"
+                  "Jahr": "Jahr oder Zeitraum",
+                  "Wert": "Schätzwert Euro",
+                  "Details": "Kompakte Motivbeschreibung",
+                  "Link": "Google-Suche Link für dieses Stück"
                 }
-                Kein Smalltalk. Falls Motiv unklar, beschreibe nur sichtbare Elemente.
+                WICHTIG: Wenn das Jahr nicht exakt lesbar ist, gib das Jahrhundert an.
                 """
                 
                 try:
-                    response = model.generate_content([prompt, img])
-                    # JSON aus Markdown-Block extrahieren
+                    # Wir senden das optimierte Bild an die KI
+                    response = model.generate_content([prompt, enhanced_img])
                     raw_text = response.text.replace("```json", "").replace("```", "").strip()
                     data = json.loads(raw_text)
                     
-                    # Fingerabdruck für den Vergleich erstellen
-                    fingerprint = f"{data['Land']}-{data['Einheit']}-{data['Jahr']}"
-                    results_pool.append((fingerprint, data))
-                    
-                    # Prüfen, ob wir dieses Ergebnis schon einmal hatten
-                    counts = collections.Counter([r[0] for r in results_pool])
-                    for fp, count in counts.items():
-                        if count >= 2:
-                            # Konsens gefunden!
-                            final_data = next(item[1] for item in results_pool if item[0] == fp)
-                            found_consensus = True
-                            break
-                    
-                    if found_consensus:
-                        break
+                    # Fingerabdruck: Wir gewichten Land + Herrscher stärker als das Jahr
+                    fingerprint = f"{data['Land']}-{data['Herrscher']}".lower()
+                    results_pool.append(data)
                 except:
                     continue
 
-        if found_consensus:
-            st.success("✅ Übereinstimmendes Ergebnis gefunden!")
-            
-            # Die 4 Kernpunkte klar darlegen
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Land", final_data['Land'])
-            c2.metric("Einheit", final_data['Einheit'])
-            c3.metric("Herrscher", final_data['Herrscher'])
-            c4.metric("Jahr", final_data['Jahr'])
-            
-            st.write(f"**Geschätzter Wert:** {final_data['Wert']}")
-            st.markdown(f"[🔗 Referenz im Internet prüfen]({final_data['Link']})")
-            
-            # Details nur bei Bestätigung/Wunsch
-            with st.expander("🔍 Details zum Motiv & Analyse"):
-                st.write(final_data['Motiv_Details'])
-                st.info("Dieses Ergebnis wurde durch mindestens zwei identische KI-Analysen bestätigt.")
-        else:
-            st.error("❌ Kein Konsens möglich. Die KI liefert zu unterschiedliche Ergebnisse. Bitte Foto verbessern.")
+            # Konsens-Logik: Welcher Herrscher/Land-Kombination kam am häufigsten vor?
+            fps = [f"{r['Land']}-{r['Herrscher']}".lower() for r in results_pool]
+            if fps:
+                most_common_fp = collections.Counter(fps).most_common(1)[0]
+                
+                # Wir zeigen das Ergebnis an, wenn mindestens 2x derselbe Herrscher gefunden wurde
+                if most_common_fp[1] >= 2:
+                    # Nimm das erste Resultat, das zum häufigsten Fingerabdruck passt
+                    final_data = next(r for r in results_pool if f"{r['Land']}-{r['Herrscher']}".lower() == most_common_fp[0])
+                    
+                    st.success(f"✅ Konsens gefunden ({most_common_fp[1]} von 5 Analysen stimmen überein)")
+                    
+                    # Saubere Kacheln für die Fakten
+                    st.divider()
+                    c1, c2 = st.columns(2)
+                    c1.metric("Land", final_data['Land'])
+                    c2.metric("Herrscher", final_data['Herrscher'])
+                    
+                    c3, c4 = st.columns(2)
+                    c3.metric("Einheit", final_data['Einheit'])
+                    c4.metric("Jahr/Epoche", final_data['Jahr'])
+                    
+                    st.info(f"💰 **Schätzwert:** {final_data['Wert']}")
+                    st.markdown(f"🔗 [Direkt-Suche nach Vergleichsstücken](https://www.google.com/search?q=Münze+{final_data['Land']}+{final_data['Herrscher']}+{final_data['Einheit']})")
+                    
+                    with st.expander("🔍 Details zum Motiv einblenden"):
+                        st.write(final_data['Details'])
+                else:
+                    st.warning("⚠️ Kein klarer Konsens. Hier ist die wahrscheinlichste Vermutung:")
+                    st.json(results_pool[0])
+            else:
+                st.error("Keine Daten von der KI erhalten. API-Limit erreicht?")
 
-    # --- MESSEN (Dein funktionierender Code) ---
+    # --- DURCHMESSER (Deine Basis) ---
     st.divider()
     st.subheader("📏 Durchmesser")
-    ppi = st.slider("Display-Kalibrierung (Handy-PPI)", 100, 600, 160)
-    size = st.slider("Kreisgröße", 50, 600, 250)
+    ppi = st.slider("Kalibrierung (Handy-PPI)", 100, 600, 160)
+    size = st.slider("Kreisgröße", 50, 600, 125)
     mm = (size / ppi) * 25.4
     st.metric("Berechneter Durchmesser", f"{mm:.1f} mm")
     st.markdown(f'<div style="width:{size}px; height:{size}px; border:4px solid gold; border-radius:50%; margin:auto;"></div>', unsafe_allow_html=True)
