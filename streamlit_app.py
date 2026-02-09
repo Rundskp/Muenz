@@ -36,7 +36,7 @@ if uploaded_file:
             status_area = st.empty()
             
             for i in range(max_tries):
-                status_area.text(f"Versuch {i+1} von {max_attempts}...")
+                status_area.text(f"Versuch {i+1} von {max_tries}...")
                 
                 # Prompt mit Fokus auf Identifikation statt "Blabla"
                 prompt = """
