@@ -11,7 +11,7 @@ st.title("🪙 Münz-Detektiv")
 if "GOOGLE_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
     # Wir nutzen hier die stabilste Modell-Bezeichnung
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-2.5-flash')
 else:
     st.error("🔑 API-Key fehlt in den Secrets!")
     st.stop()
