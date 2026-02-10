@@ -5,8 +5,8 @@ import json
 import urllib.parse
 
 # --- 1. SETUP ---
-st.set_page_config(page_title="MuenzID Pro - Match Finder", layout="wide")
-st.title("🪙 Münz-Detektiv: Fakten & Datenbank-Match")
+st.set_page_config(page_title="MuenzID Universal", layout="wide")
+st.title("🪙 Münz-Detektiv: Universal")
 
 # Session State
 if "ppi" not in st.session_state:
@@ -14,135 +14,145 @@ if "ppi" not in st.session_state:
 if "result" not in st.session_state:
     st.session_state.result = None
 
-# API Client (Gemma 3 27B - Stabil & Klug)
+# API Client (Gemma 3 27B)
 if "GOOGLE_API_KEY" in st.secrets:
     client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
 else:
-    st.error("🔑 API-Key fehlt in den Secrets!")
+    st.error("🔑 API-Key fehlt!")
     st.stop()
 
-# --- 2. PRÄZISIONS-MESSUNG ---
-st.header("📏 1. Kalibrierung (Der wichtigste Filter)")
-st.info("Lege eine 1€ oder 2€ Münze auf das Display. Stelle den Kreis ein.")
+# --- 2. OPTIONALE KALIBRIERUNG ---
+st.header("1. Messung (Optional)")
 
-size_px = st.slider("Kreisgröße", 100, 800, 300)
+# Der Umschalter für den Foto-Modus
+use_diameter = st.toggle("📏 Physische Messung verwenden (Genauer)", value=True)
 
-c1, c2 = st.columns(2)
-with c1:
-    if st.button("📍 1 € (23.25mm)", use_container_width=True):
-        st.session_state.ppi = (size_px / 23.25) * 25.4
-        st.toast("Kalibriert auf 1€")
-with c2:
-    if st.button("📍 2 € (25.75mm)", use_container_width=True):
-        st.session_state.ppi = (size_px / 25.75) * 25.4
-        st.toast("Kalibriert auf 2€")
+mm_prompt_text = "UNBEKANNT (Nur Foto-Analyse)"
+mm_logic_instruction = "Bestimme den Typ rein visuell anhand von Proportionen und Schrift."
 
-mm_ist = (size_px / st.session_state.ppi) * 25.4
-st.metric("Messwert", f"{mm_ist:.2f} mm")
+if use_diameter:
+    st.info("Lege die Münze auf das Display für maximale Präzision.")
+    
+    col_cal1, col_cal2 = st.columns([3, 1])
+    with col_cal1:
+        size_px = st.slider("Kreisgröße", 100, 800, 300)
+    
+    with col_cal2:
+        st.write("Kalibrieren:")
+        c1, c2 = st.columns(2)
+        if c1.button("1 €", use_container_width=True):
+            st.session_state.ppi = (size_px / 23.25) * 25.4
+            st.toast("1€ Kalibriert")
+        if c2.button("2 €", use_container_width=True):
+            st.session_state.ppi = (size_px / 25.75) * 25.4
+            st.toast("2€ Kalibriert")
 
-# Fixed Circle
-st.markdown(f"""
-    <div style="display: flex; justify-content: center; padding: 20px; background: #111; border-radius: 10px;">
-        <div style="width:{size_px}px; height:{size_px}px; border:4px solid gold; border-radius:50%; display: flex; align-items: center; justify-content: center;">
-            <div style="width: 5px; height: 5px; background: red; border-radius: 50%;"></div>
+    # Berechnung
+    mm_ist = (size_px / st.session_state.ppi) * 25.4
+    st.metric("Gemessener Durchmesser", f"{mm_ist:.2f} mm")
+    
+    # Visueller Kreis
+    st.markdown(f"""
+        <div style="display: flex; justify-content: center; padding: 10px; background: #111; border-radius: 10px; margin-bottom: 20px;">
+            <div style="width:{size_px}px; height:{size_px}px; border:4px solid gold; border-radius:50%; display: flex; align-items: center; justify-content: center;">
+                <div style="width: 5px; height: 5px; background: red; border-radius: 50%;"></div>
+            </div>
         </div>
-    </div>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
+    
+    # Prompt-Daten setzen
+    mm_prompt_text = f"{mm_ist:.1f} mm"
+    mm_logic_instruction = f"Nutze den Durchmesser von {mm_ist:.1f}mm als HARTEN FILTER. Schließe Münzen aus, die deutlich größer/kleiner sind."
 
-# --- 3. ANALYSE-LOGIK ---
-st.header("🔍 2. Identifikation")
+else:
+    st.warning("⚠️ Ohne Messung kann die KI Größenverhältnisse (z.B. 10 vs 20 Kreuzer) nur schätzen.")
+
+# --- 3. ANALYSE ---
+st.header("2. Identifikation")
 uploaded_file = st.file_uploader("Bild hochladen", type=["jpg", "jpeg", "png"])
 
 if uploaded_file:
-    img = Image.open(uploaded_file)
-    
-    # Forensik-Filter (Nur zur besseren Lesbarkeit für die KI)
-    proc = ImageOps.grayscale(img)
-    proc = proc.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
-    
-    st.image([img, proc], caption=["Original", "Struktur-Scan"], width=400)
+    raw_img = Image.open(uploaded_file)
+    st.image(raw_img, caption="Originalbild (Farbe)", width=400)
 
-    if st.button("🚀 Match in Datenbank suchen", use_container_width=True):
-        with st.status("Extrahiere Merkmale & suche Übereinstimmungen...") as status:
+    if st.button("🚀 Analyse starten", use_container_width=True):
+        with st.status("Analysiere Merkmale & Datenbanken...") as status:
             
-            # Der Prompt, der das Ziel fokussiert
             prompt = f"""
-            Du bist ein numismatischer Experte. Deine Aufgabe ist es, eine Münze anhand visueller Fakten in deiner internen Datenbank zu finden.
+            Du bist ein professioneller Numismatiker.
+            Deine Aufgabe: Bestimme die Münze basierend auf den verfügbaren Fakten.
             
             GEGEBENE FAKTEN:
-            - Durchmesser (gemessen): {mm_ist:.1f} mm (+/- 0.5mm Toleranz)
+            1. DURCHMESSER: {mm_prompt_text}
             
-            DEIN PROZESS (SCHRITT FÜR SCHRITT):
-            1. SCANNE VORDERSEITE & RÜCKSEITE:
-               - Was ist das Hauptmotiv? (Stehende Figur, Kopf, Wappen, Adler, Zahl?)
-               - Welche Buchstaben/Zahlen sind erkennbar? (OCR)
+            ANALYSE-LOGIK:
+            1. MATERIAL-SCAN (Farbbild):
+               - Gelb -> Gold/Messing
+               - Grau/Weiß -> Silber/Zink/Nickel
+               - Rot/Braun -> Kupfer/Bronze
             
-            2. DATENBANK-ABGLEICH (MATCHING):
-               - Suche nach Münzen, die ALLE diese Kriterien erfüllen:
-                 a) Durchmesser passt zu {mm_ist:.1f}mm
-                 b) Motiv passt (z.B. Heiliger Ladislaus vs. Sämann vs. Ferdinand)
-                 c) Textfragmente passen.
+            2. VISUELLE ERKENNUNG:
+               - Motiv (Adler, Kopf, Wappen, Figur).
+               - Text/Legende (OCR).
             
-            3. ERGEBNIS-PROFIL:
-               - Bestimme Land, Herrscher, Jahr/Zeitraum.
-               - Bestimme das Material (Gold, Silber, Bronze, Alu) anhand des Aussehens und Typs.
-               - Schätze den Wert (grob: Materialwert oder Sammlerwert).
+            3. MATCHING-REGEL:
+               - {mm_logic_instruction}
+               - Falls Durchmesser UNBEKANNT: Nenne den wahrscheinlichsten Typ, aber weise auf mögliche Größenvarianten hin.
 
             Antworte NUR als JSON:
             {{
               "Land": "Land / Region",
-              "Zeitraum": "Prägezeitraum oder Jahr",
-              "Nominal": "Währungswert",
-              "Herrscher": "Name des Herrschers oder Republik",
-              "Material": "Vermutetes Metall",
-              "Wert_Schaetzung": "Ca. Wert (in Euro)",
-              "Erkannte_Merkmale": "Liste der Übereinstimmungen (Motiv, Text, Größe)",
-              "Sicherheit": "Hoch/Mittel/Niedrig"
+              "Nominal": "Wert (z.B. 1 Dukat)",
+              "Jahr_Zeitraum": "Jahr oder Epoche",
+              "Material": "Erkanntes Metall",
+              "Suchbegriff": "Optimierter Suchstring für Numista",
+              "Begruendung": "Warum ist es diese Münze?"
             }}
             """
             
             try:
-                # API Call
                 response = client.models.generate_content(
                     model="gemma-3-27b-it", 
-                    contents=[prompt, proc]
+                    contents=[prompt, raw_img]
                 )
                 
-                # Sauberes Parsing
                 txt = response.text
                 if "```json" in txt:
                     txt = txt.replace("```json", "").replace("```", "")
+                
                 start = txt.find('{')
                 end = txt.rfind('}') + 1
                 
                 if start != -1 and end != -1:
                     st.session_state.result = json.loads(txt[start:end])
-                    status.update(label="Treffer gefunden!", state="complete")
+                    status.update(label="Gefunden!", state="complete")
                 else:
-                    st.error("Datenbank-Antwort war unleserlich.")
-                    
+                    st.error("Datenbank-Antwort unleserlich.")
             except Exception as e:
                 st.error(f"Fehler: {e}")
 
-# --- 4. ERGEBNIS-DARSTELLUNG ---
+# --- 4. ERGEBNIS ---
 if st.session_state.result:
     res = st.session_state.result
     st.divider()
     
-    # Die ZIEL-INFORMATIONEN auf einen Blick
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Land & Herrscher", f"{res.get('Land')}\n{res.get('Herrscher')}")
-    c2.metric("Nominal & Jahr", f"{res.get('Nominal')}\n{res.get('Zeitraum')}")
-    c3.metric("Material & Wert", f"{res.get('Material')}\n{res.get('Wert_Schaetzung')}")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.success(f"**{res.get('Land')}**")
+        st.metric("Nominal", res.get('Nominal'))
+        st.info(f"Material: {res.get('Material')}")
+    with c2:
+        st.write(f"**Zeit:** {res.get('Jahr_Zeitraum')}")
+        st.caption(f"Analyse: {res.get('Begruendung')}")
     
-    st.success(f"**Übereinstimmungs-Analyse:** {res.get('Erkannte_Merkmale')}")
-    st.caption(f"Sicherheit der Bestimmung: {res.get('Sicherheit')}")
+    # Link Generator
+    s_term = res.get('Suchbegriff', f"{res.get('Land')} {res.get('Nominal')}")
+    q = urllib.parse.quote(s_term)
     
-    # Such-Links für den Beweis
-    search_q = f"{res.get('Land')} {res.get('Herrscher')} {res.get('Nominal')} {res.get('Zeitraum')}"
-    q = urllib.parse.quote(search_q)
-    st.markdown(f"### 🔎 [Beweis auf Numista ansehen](https://en.numista.com/catalogue/index.php?q={q})")
+    st.markdown("### 🔎 Referenzen")
+    st.markdown(f"👉 [**Numista Datenbank**](https://en.numista.com/catalogue/index.php?q={q})")
+    st.markdown(f"👉 [**MA-Shops Handel**](https://www.ma-shops.de/result.php?searchstr={q})")
     
-    if st.button("Neue Suche"):
+    if st.button("Neu Starten"):
         st.session_state.result = None
         st.rerun()
