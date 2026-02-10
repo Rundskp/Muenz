@@ -1,29 +1,28 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai  # Neue Bibliothek
 from PIL import Image, ImageEnhance
 import json
 import urllib.parse
+import io
 
 # --- SETUP ---
-st.set_page_config(page_title="MuenzID Pro - Experte", layout="wide")
-st.title("🪙 Münz-Detektiv: Systematische Identifikation")
+st.set_page_config(page_title="MuenzID Pro - Gemma 3", layout="wide")
+st.title("🪙 Münz-Detektiv: Systematische Gemma-Analyse")
 
-# --- SESSION STATE (Das Gedächtnis der App) ---
-# Hier werden die Werte initialisiert, damit sie nicht verloren gehen.
+# Session State Initialisierung
 if "ppi" not in st.session_state:
     st.session_state.ppi = 160
 if "analysis_result" not in st.session_state:
     st.session_state.analysis_result = None
 
-# API-Check
+# Neuer Client-Ansatz laut Google Docs
 if "GOOGLE_API_KEY" in st.secrets:
-    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    model = genai.GenerativeModel('gemma-3-27b')
+    client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
 else:
-    st.error("🔑 API-Key fehlt!")
+    st.error("🔑 API-Key fehlt in den Secrets!")
     st.stop()
 
-# --- 1. KALIBRIERUNG ---
+# --- 1. KALIBRIERUNG (Zentral im Hauptbereich) ---
 st.header("📏 1. Kalibrierung & Messung")
 st.info("Referenzmünze auflegen, Regler anpassen und Kalibrier-Button drücken.")
 
@@ -35,104 +34,119 @@ with col_cal1:
 with col_cal2:
     if st.button("📍 Kalibrieren 1 €", use_container_width=True):
         st.session_state.ppi = (size_px / 23.25) * 25.4
-        st.toast("Kalibrierung auf 1 € gespeichert!")
+        st.toast("Kalibrierung auf 1 € (23.25mm) gespeichert!")
 
 with col_cal3:
     if st.button("📍 Kalibrieren 2 €", use_container_width=True):
         st.session_state.ppi = (size_px / 25.75) * 25.4
-        st.toast("Kalibrierung auf 2 € gespeichert!")
+        st.toast("Kalibrierung auf 2 € (25.75mm) gespeichert!")
 
 mm_ist = (size_px / st.session_state.ppi) * 25.4
 st.metric("Aktueller Messwert", f"{mm_ist:.2f} mm")
 
-# Visueller Mittelpunkt
+# Visueller Messkreis
 st.markdown(f"""
     <div style="display: flex; justify-content: center; padding: 20px; background: #1e1e1e; border-radius: 15px;">
         <div style="width:{size_px}px; height:{size_px}px; border:4px solid gold; border-radius:50%; display: flex; align-items: center; justify-content: center;">
-            <div style="width: 6px; height: 6px; background: red; border-radius: 50%;"></div>
+            <div style="width: 8px; height: 8px; background: red; border-radius: 50%;"></div>
         </div>
     </div>
 """, unsafe_allow_html=True)
 
-# --- 2. ANALYSE (Aktion) ---
+# --- 2. BILD-UPLOAD & ANALYSE ---
 st.header("🔍 2. Bild-Analyse")
 uploaded_file = st.file_uploader("Münzbild hochladen", type=["jpg", "jpeg", "png"])
 
 if uploaded_file:
-    img = Image.open(uploaded_file)
-    st.image(img, caption="Vorschau", width=300)
+    raw_img = Image.open(uploaded_file)
+    st.image(raw_img, caption="Vorschau", width=350)
 
-    # --- HIER PASSIERT DIE ARBEIT ---
     if st.button("🚀 Systematische Bestimmung starten"):
-        with st.status("Hierarchische Analyse läuft...", expanded=True) as status:
-            prompt = f"""
-            Analysiere als Numismatiker. Durchmesser: {mm_ist:.1f} mm.
-            HIERARCHISCHE SCHRITTE:
-            1. MOTIV-TYP: (Wappen, Adler, Kopf, Figur, etc.)
-            2. STRUKTUR: (Blickrichtung, Teilung des Schildes, Haltung der Figur)
-            3. FEIN-DETAILS: (Accessoires wie Krone, Zepter, Bart, Haarlänge, Augenbinde, Kind?)
-            4. KONTEXT: (Gelesene Zeichen rundherum oder mittig)
+        with st.status("Hierarchische Analyse läuft...") as status:
+            
+            # Bild für die API vorbereiten
+            img_byte_arr = io.BytesIO()
+            raw_img.save(img_byte_arr, format='PNG')
+            img_bytes = img_byte_arr.getvalue()
 
-            Antworte NUR als JSON:
+            # Der hierarchische Prompt
+            prompt = f"""
+            Analysiere diese Münze streng hierarchisch wie ein Numismatiker. 
+            Physische Größe: {mm_ist:.1f} mm.
+
+            SCHRITT 1: MOTIV-TYP
+            Bestimme das Hauptmotiv (Wappen, Adler, Gesicht/Portrait, Figur, etc.).
+
+            SCHRITT 2: STRUKTUR-DETAILS
+            - Wappen: Teilung (geviertelt/halb), Form des Schildes?
+            - Adler: Blickrichtung, Flügelhaltung?
+            - Kopf: Profil oder frontal? Bart? Haarlänge? Markante Züge (Nase, Brille)?
+            - Figur: Stehend/sitzend? Blickrichtung?
+
+            SCHRITT 3: FEIN-ANALYSE
+            - Was wird gehalten (Zepter, Reichsapfel, Kind, Waage, Schwert)?
+            - Accessoires (Krone, Heiligenschein, Augenbinde)?
+            - Symbole in den Wappenfeldern (Löwen, Streifen, Adler, Kreuze)? Wie oft?
+
+            SCHRITT 4: LEGENDE
+            Lies alle Zeichen rundherum und in der Mitte. Setze sie in Kontext zum Motiv.
+
+            Antworte ausschließlich im JSON-Format:
             {{
-              "Identität": "Land, Nominal, Herrscher",
-              "Details": "Struktur & Fein-Merkmale",
+              "Identitaet": "Land, Nominal, Herrscher/Republik",
+              "Motiv_Analyse": "Beschreibung der Struktur und Blickrichtungen",
+              "Fein_Details": "Liste aller Symbole und Accessoires",
               "Legende": "Gelesene Zeichen",
-              "Keywords": "Suchbegriffe für Fachhandel",
-              "Begruendung": "Warum passt das zu {mm_ist:.1f} mm?"
+              "Keywords": "3-4 Begriffe für Fachsuche",
+              "Begruendung": "Warum passt das Bild zum Durchmesser von {mm_ist:.1f} mm?"
             }}
             """
+            
             try:
-                # Bildverbesserung & API-Aufruf
-                enhanced = ImageEnhance.Contrast(img).enhance(1.8)
-                response = model.generate_content([prompt, enhanced])
+                # API Aufruf mit dem neuen Client
+                response = client.models.generate_content(
+                    model="gemma-3-27b-it",
+                    contents=[prompt, raw_img]
+                )
                 
-                # Robustes JSON Parsing (findet den { } Block im Text)
-                raw_text = response.text
-                json_start = raw_text.find('{')
-                json_end = raw_text.rfind('}') + 1
+                # JSON extrahieren
+                text_response = response.text
+                start = text_response.find('{')
+                end = text_response.rfind('}') + 1
+                st.session_state.analysis_result = json.loads(text_response[start:end])
                 
-                # WICHTIG: Ergebnis im Session State speichern!
-                st.session_state.analysis_result = json.loads(raw_text[json_start:json_end])
-                
-                status.update(label="Analyse fertig!", state="complete", expanded=False)
+                status.update(label="Analyse abgeschlossen!", state="complete")
             except Exception as e:
-                st.error(f"Ein Fehler ist aufgetreten: {e}")
-                with st.expander("Fehler-Details"):
-                    st.write(response.text if 'response' in locals() else "Keine Antwort von der API.")
+                st.error(f"Fehler: {e}")
+                with st.expander("Roh-Antwort der KI"):
+                    st.write(response.text if 'response' in locals() else "Keine Antwort.")
 
-# --- 3. ERGEBNIS-ANZEIGE (Darstellung) ---
-# Dieser Teil wird IMMER ausgeführt, wenn ein Ergebnis im "Gedächtnis" ist.
-# Er liegt AUSSERHALB des if st.button()-Blocks.
+# --- 3. ERGEBNIS-ANZEIGE ---
 if st.session_state.analysis_result:
     res = st.session_state.analysis_result
     st.divider()
     
-    # Ergebnisse anzeigen
-    col_res1, col_res2 = st.columns(2)
-    with col_res1:
-        st.subheader("Befund")
-        st.success(f"**Bestimmung:** {res.get('Identität', 'Keine Bestimmung')}")
-        st.write(f"**Details:** {res.get('Details', '-')}")
-    with col_res2:
-        st.subheader("Kontext")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.subheader("🏺 Numismatischer Befund")
+        st.success(f"**Bestimmung:** {res.get('Identitaet', 'Unbekannt')}")
+        st.write(f"**Struktur:** {res.get('Motiv_Analyse', '-')}")
+        st.write(f"**Details:** {res.get('Fein_Details', '-')}")
+    with col_b:
+        st.subheader("📜 Kontext & Beweise")
         st.write(f"**Legende:** `{res.get('Legende', '-')}`")
         st.info(f"**Analyse:** {res.get('Begruendung', '-')}")
 
-    # Profi-Links generieren
+    # Profi-Links
     st.subheader("🔗 Verifikation")
-    search_term = f"{res.get('Identität', '')} {res.get('Keywords', '')} {mm_ist:.1f}mm"
+    search_term = f"{res.get('Identitaet', '')} {res.get('Keywords', '')} {mm_ist:.1f}mm"
     q = urllib.parse.quote(search_term)
     
-    c1, c2, c3 = st.columns(3)
-    c1.markdown(f"[📚 Numista Check](https://en.numista.com/catalogue/index.php?q={q})")
-    c2.markdown(f"[💰 MA-Shops Handel](https://www.ma-shops.de/result.php?searchstr={q})")
-    c3.markdown(f"[🖼️ Google Bilder](https://www.google.com/search?q={q}&tbm=isch)")
-    
-    st.caption(f"Generierter Suchbegriff: {search_term}")
+    l1, l2, l3 = st.columns(3)
+    l1.markdown(f"[📚 Numista Check](https://en.numista.com/catalogue/index.php?q={q})")
+    l2.markdown(f"[💰 MA-Shops Suche](https://www.ma-shops.de/result.php?searchstr={q})")
+    l3.markdown(f"[🖼️ Google Bilder](https://www.google.com/search?q={q}&tbm=isch)")
 
-    # Button zum Zurücksetzen
-    st.divider()
-    if st.button("🗑️ Analyse-Ergebnis löschen"):
+    if st.button("🗑️ Neue Analyse"):
         st.session_state.analysis_result = None
         st.rerun()
