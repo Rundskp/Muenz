@@ -7,22 +7,21 @@ import io
 
 # --- SETUP & SESSION STATE ---
 st.set_page_config(page_title="MuenzID Pro - Expert", layout="wide")
-st.title("🪙 Münz-Detektiv: Forensische Analyse")
+st.title("🪙 Münz-Detektiv: Forensische Analyse 2026")
 
-# Initialisierung des Gedächtnisses
 if "ppi" not in st.session_state:
     st.session_state.ppi = 160.0
 if "result" not in st.session_state:
     st.session_state.result = None
 
-# API Client Initialisierung (Gemma 3)
+# API Client (Gemma 3)
 if "GOOGLE_API_KEY" in st.secrets:
     client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
 else:
     st.error("🔑 API-Key fehlt in den Secrets!")
     st.stop()
 
-# --- 1. KALIBRIERUNG & MESSUNG ---
+# --- 1. KALIBRIERUNG ---
 st.header("📏 1. Physische Kalibrierung")
 st.info("Lege eine 1€ oder 2€ Münze auf das Display und stelle den Kreis passgenau ein.")
 
@@ -41,7 +40,7 @@ with c2:
 mm_ist = (size_px / st.session_state.ppi) * 25.4
 st.metric("Gemessener Durchmesser", f"{mm_ist:.2f} mm")
 
-# Unveränderlicher Mittelpunkt für die physische Münze
+# Fixed-Mittelpunkt
 st.markdown(f"""
     <div style="display: flex; justify-content: center; padding: 30px; background: #0e1117; border-radius: 15px; border: 1px solid #333;">
         <div style="width:{size_px}px; height:{size_px}px; border:6px solid gold; border-radius:50%; display: flex; align-items: center; justify-content: center; position: relative;">
@@ -50,71 +49,56 @@ st.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
-# --- 2. HIERARCHISCHE ANALYSE ---
+# --- 2. BILD-UPLOAD & ANALYSE ---
 st.header("🔍 2. Bild-Analyse")
-uploaded_file = st.file_uploader("Münzbild hochladen (Bodenfunde/Abgenutzt erlaubt)", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Münzbild hochladen", type=["jpg", "jpeg", "png"])
 
 if uploaded_file:
     raw_img = Image.open(uploaded_file)
     
-    # --- FORENSISCHE BILD-OPTIMIERUNG ---
-    # 1. Graustufen zur Rauschreduzierung
+    # FORENSISCHER FILTER
     proc = ImageOps.grayscale(raw_img)
-    # 2. Autocontrast zur Spreizung des Histogramms
     proc = ImageOps.autocontrast(proc, cutoff=2)
-    # 3. Aggressive Kanten-Schärfung (Unsharp Mask) für OCR-Verbesserung
-    proc = proc.filter(ImageFilter.UnsharpMask(radius=2, percent=200, threshold=3))
+    proc = proc.filter(ImageFilter.UnsharpMask(radius=2, percent=250, threshold=3))
     
-    st.image([raw_img, proc], caption=["Originalbild", "Forensik-Filter (Struktur-Fokus)"], width=400)
+    st.image([raw_img, proc], caption=["Original", "Forensik-Filter (Struktur-Fokus)"], width=400)
 
     if st.button("🚀 Systematische Bestimmung starten", use_container_width=True):
         with st.status("Analysiere Details der Details...") as status:
             prompt = f"""
-            Analysiere diese Münze streng hierarchisch. Durchmesser: {mm_ist:.1f} mm.
+            Du bist ein numismatischer Forensiker. Durchmesser: {mm_ist:.1f} mm.
 
-            REGEL: Sei ehrlich. Wenn Legenden unleserlich sind, schreibe [unleserlich]. Erfinde nichts!
+            KRITISCHE PRÜFUNG (Veto-Regeln):
+            1. Wenn du eine '1' und eine schreitende Figur siehst: Prüfe ZUERST ob es der ÖSTERREICHISCHE SÄMANN (Sower) ist. 
+               Vergleiche den Adler: Hat er Sicheln und Hammer in den Fängen? Dann ist es ÖSTERREICH, NICHT SCHWEIZ.
+            2. DIAMETER-CHECK: Ein Schweizer 1/2 Franken ist 18mm groß. Wenn der Messwert {mm_ist:.1f}mm ist, ist Schweiz extrem unwahrscheinlich!
+            3. REGENLEDE: Wenn du 'REPUBLIK' liest, prüfe ob danach 'ÖSTERREICH' (stark abgenutzt) folgen könnte.
 
-            STUFE 1: MOTIV-IDENTIFIKATION
-            Bestimme das Hauptmotiv (z.B. Wappen, Adler, Kopf, stehende Figur/Sämann). 
+            HIERARCHISCHE ANALYSE:
+            - STUFE 1: Hauptmotiv (Wappen/Adler vs. Figur).
+            - STUFE 2: Details der Figur (Sämann hält Sack, Helvetia hält Schild).
+            - STUFE 3: Buchstabenreste (Suche nach 'S' für Schilling oder 'REPUBLIK').
 
-            STUFE 2: STRUKTUR-ANALYSE
-            - Wappen: Teilung (geviertelt?), Wappeninhalte exakt prüfen (z.B. Löwen, Balken).
-            - Kopf/Figur: Blickrichtung? Haltung? (Bsp: Schreitender Mann, der Saatgut verstreut).
-
-            STUFE 3: FEIN-DETAILS
-            - Accessoires: Was wird gehalten (Zepter, Reichsapfel, Kind, Sichel, Hammer)?
-            - Merkmale: Bart, Brille, Haarlänge, Krone?
-            - Such-Fokus: Suche bei Zahlen wie '1' explizit nach Begleitbuchstaben (S, G, K).
-
-            STUFE 4: LEGENDE & KONTEXT
-            Transkribiere Buchstaben rundherum. Verknüpfe gelesene Fragmente mit dem Motiv.
-
-            Antworte AUSSCHLIESSLICH im JSON-Format:
+            Antworte AUSSCHLIESSLICH als JSON:
             {{
-              "Bestimmung": "Land, Nominal, Jahr/Herrscher",
-              "Struktur_Details": "Beschreibung des Motivs und der Haltung",
-              "Feinheiten": "Liste aller Accessoires und Wappensymbole",
+              "Bestimmung": "Land, Nominal, Jahr/Ära",
+              "Details": "Genaue Beschreibung (z.B. Adler mit Bindenschild, Sämann)",
               "Legende": "Gelesene Fragmente oder [unleserlich]",
-              "Handels_Keywords": "Numismatische Fachbegriffe für Profi-Suche",
-              "Analyse": "Beweisführung basierend auf Durchmesser {mm_ist:.1f}mm"
+              "Analyse": "Beweisführung warum {mm_ist:.1f}mm entscheidend ist",
+              "Keywords": "Fachbegriffe für Suche"
             }}
             """
             try:
-                # Sende das optimierte Forensik-Bild
                 response = client.models.generate_content(
                     model="gemma-3-27b-it",
                     contents=[prompt, proc]
                 )
-                
-                # JSON-Parsing (Fix für Indentation/Extra-Text)
                 txt = response.text
-                start = txt.find('{')
-                end = txt.rfind('}') + 1
+                start, end = txt.find('{'), txt.rfind('}') + 1
                 st.session_state.result = json.loads(txt[start:end])
-                
                 status.update(label="Analyse abgeschlossen!", state="complete")
             except Exception as e:
-                st.error(f"Fehler bei der API-Analyse: {e}")
+                st.error(f"Fehler: {e}")
 
 # --- 3. ERGEBNIS-ANZEIGE ---
 if st.session_state.result:
@@ -124,15 +108,14 @@ if st.session_state.result:
     col_a, col_b = st.columns(2)
     with col_a:
         st.success(f"**Bestimmung:** {res.get('Bestimmung', 'Unbekannt')}")
-        st.write(f"**Motiv-Struktur:** {res.get('Struktur_Details', '-')}")
-        st.write(f"**Feinheiten:** {res.get('Feinheiten', '-')}")
+        st.write(f"**Details:** {res.get('Details', '-')}")
     with col_b:
         st.write(f"**Gelesene Legende:** `{res.get('Legende', '-')}`")
         st.info(f"**Forensische Analyse:** {res.get('Analyse', '-')}")
 
     # Profi-Links
-    st.subheader("🔗 Verifikation & Handel")
-    search_q = f"{res.get('Bestimmung', '')} {res.get('Handels_Keywords', '')} {mm_ist:.1f}mm"
+    st.subheader("🔗 Verifikation")
+    search_q = f"{res.get('Bestimmung', '')} {res.get('Keywords', '')} {mm_ist:.1f}mm"
     q_enc = urllib.parse.quote(search_q)
     
     l1, l2, l3 = st.columns(3)
