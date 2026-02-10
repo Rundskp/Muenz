@@ -1,41 +1,39 @@
 import streamlit as st
 from google import genai
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageOps # ImageOps ist neu
 import json
 import urllib.parse
 import io
 
 # --- SETUP ---
 st.set_page_config(page_title="MuenzID Pro - Systematik", layout="wide")
-st.title("🪙 Münz-Detektiv: Hierarchische Systematik")
+st.title("🪙 Münz-Detektiv: Systematische Hierarchie")
 
-# Gedächtnis der App (Session State)
+# Gedächtnis & Client
 if "ppi" not in st.session_state:
     st.session_state.ppi = 160.0
 if "result" not in st.session_state:
     st.session_state.result = None
 
-# API Client (SDK v1 für Gemma 3)
 if "GOOGLE_API_KEY" in st.secrets:
     client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
 else:
     st.error("🔑 API-Key fehlt!")
     st.stop()
 
-# --- 1. KALIBRIERUNG (Zentrum) ---
+# --- 1. KALIBRIERUNG ---
 st.header("📏 1. Kalibrierung & Messung")
-st.info("Lege eine 1€ oder 2€ Münze auf das Display. Stelle den Regler ein, bis der goldene Kreis die Münze umschließt.")
+st.info("Referenzmünze auflegen, Regler anpassen, Kalibrieren drücken.")
 
-# Slider im Hauptbereich
 size_px = st.slider("Kreisgröße anpassen", 100, 800, 300)
 
 c1, c2 = st.columns(2)
 with c1:
-    if st.button("📍 Kalibrieren mit 1 € (23.25 mm)", use_container_width=True):
+    if st.button("📍 Kalibrieren 1 € (23.25 mm)", use_container_width=True):
         st.session_state.ppi = (size_px / 23.25) * 25.4
         st.toast("Kalibriert auf 1 €!")
 with c2:
-    if st.button("📍 Kalibrieren mit 2 € (25.75 mm)", use_container_width=True):
+    if st.button("📍 Kalibrieren 2 € (25.75 mm)", use_container_width=True):
         st.session_state.ppi = (size_px / 25.75) * 25.4
         st.toast("Kalibriert auf 2 €!")
 
@@ -61,45 +59,53 @@ if uploaded_file:
 
     if st.button("🚀 Systematische Bestimmung starten", use_container_width=True):
         with st.status("Analysiere Details der Details...") as status:
+            
+            # --- NEU: Aggressive Bildvorbereitung für OCR ---
+            # 1. In Graustufen umwandeln (entfernt Farbrauschen bei Kupfer)
+            gray_img = ImageOps.grayscale(raw_img)
+            # 2. Extreme Schärfung, um abgenutzte Kanten zu finden
+            sharpened = ImageEnhance.Sharpness(gray_img).enhance(3.5)
+            # 3. Moderater Kontrast auf das geschärfte Graubild
+            final_processed_img = ImageEnhance.Contrast(sharpened).enhance(1.5)
+            
+            # --- NEU: Der Anti-Halluzinations-Prompt ---
             prompt = f"""
             Analysiere diese Münze streng hierarchisch. Durchmesser: {mm_ist:.1f} mm.
+            
+            REGEL NR. 1: Wenn du Text nicht klar lesen kannst, schreibe "[unleserlich]". Erfinde NIEMALS Buchstaben!
 
-            STUFE 1: MOTIV (Was liegt vor?)
-            Identifiziere: Wappen, Adler, Gesicht/Kopf, Figur (stehend/sitzend), oder Zahl?
+            STUFE 1: MOTIV & STRUKTUR
+            - Was ist das zentrale Element? (z.B. Wappenschild, Zahl, Kopf).
+            - Wie ist es aufgebaut? (z.B. "Gekrönter Schild mit einer großen '1' darin").
 
-            STUFE 2: STRUKTUR (Wie ist es aufgebaut?)
-            - Wappen: Schildform? Geteilt, geviertelt? Blickrichtung von Tieren?
-            - Gesicht: Profil/frontal? Blickrichtung? 
-            - Figur: Haltung, Kleidung?
+            STUFE 2: DETAIL DER DETAILS (Tiefenprüfung)
+            - Wappen/Schild: Was ist EXAKT im Inneren zu sehen? Zähle Balken, Tiere, Zahlen.
+            - Accessoires: Krone (Typ?), Zepter, Reichsapfel, Lorbeerkranz?
 
-            STUFE 3: DETAIL DER DETAILS (Tiefenprüfung)
-            - Wappen-Inhalt: Exakte Symbole in JEDEM Teil. Zähle Elemente (z.B. 3 Balken, 2 Löwen).
-            - Accessoires: Krone (Typ?), Zepter, Reichsapfel, Waage, Kind, Schwert, Augenbinde?
-            - Physiognomie: Bart (Typ?), Brille, Haarlänge, markante Merkmale?
+            STUFE 3: LEGENDE (Kritische OCR-Prüfung)
+            - Lies die Umschrift. Sei extrem konservativ. Lies nur Fragmente, die sicher sind (z.B. "M.THER...").
+            - Wenn abgenutzt, gib an, wo Text war, aber nicht mehr lesbar ist.
 
-            STUFE 4: KONTEXT (Text & Zahlen)
-            - Buchstaben: Was steht rundherum? Was steht im Abschnitt oder in der Mitte?
-            - Bringe gelesene Zeichen in direkten Kontext zu den Details aus Stufe 3.
+            STUFE 4: SYNTHESE
+            - Bestimme die Münze primär anhand der visuellen Details aus Stufe 1&2 und dem Durchmesser, falls die Legende unleserlich ist.
 
             Antworte AUSSCHLIESSLICH im JSON-Format:
             {{
               "Bestimmung": "Land, Nominal, Herrscher/Republik",
-              "Motiv": "Haupttyp und Blickrichtungen",
-              "Fein_Details": "Umfassende Liste aller Accessoires, Bartelemente und Wappeninhalte",
-              "Legende": "Gelesene Zeichen und Bedeutung",
-              "Handels_Keywords": "Präzise numismatische Suchbegriffe",
-              "Analyse": "Warum passt das zu {mm_ist:.1f} mm?"
+              "Motiv_Struktur": "Klare Beschreibung des Hauptmotivs",
+              "Fein_Details": "Liste der Accessoires und Schildinhalte",
+              "Legende_Status": "Gelesene Fragmente oder '[unleserlich]'",
+              "Handels_Keywords": "Präzise Suchbegriffe (visuell fokussiert)",
+              "Analyse": "Begründung basierend auf Beweisen und Durchmesser"
             }}
             """
             try:
-                # Bildverbesserung (Silent)
-                enhanced = ImageEnhance.Contrast(raw_img).enhance(1.8)
+                # Wir senden jetzt das optimierte Graustufenbild
                 response = client.models.generate_content(
                     model="gemma-3-27b-it",
-                    contents=[prompt, enhanced]
+                    contents=[prompt, final_processed_img]
                 )
                 
-                # Robustes JSON-Parsing
                 txt = response.text
                 start, end = txt.find('{'), txt.rfind('}') + 1
                 st.session_state.result = json.loads(txt[start:end])
@@ -109,7 +115,6 @@ if uploaded_file:
                 st.write(response.text if 'response' in locals() else "Keine API-Antwort.")
 
 # --- 3. ERGEBNIS-ANZEIGE ---
-# Dieser Teil liegt AUSSERHALB des Buttons und bleibt daher stehen!
 if st.session_state.result:
     res = st.session_state.result
     st.divider()
@@ -117,10 +122,14 @@ if st.session_state.result:
     col_a, col_b = st.columns(2)
     with col_a:
         st.success(f"**Bestimmung:** {res['Bestimmung']}")
-        st.write(f"**Struktur & Motiv:** {res['Motiv']}")
-        st.write(f"**Details der Details:** {res['Fein_Details']}")
+        st.write(f"**Motiv & Struktur:** {res['Motiv_Struktur']}")
+        st.write(f"**Details:** {res['Fein_Details']}")
     with col_b:
-        st.write(f"**Legende (Kontext):** `{res['Legende']}`")
+        # Anzeige ändert sich je nach Lesbarkeit
+        if "[unleserlich]" in res['Legende_Status']:
+             st.warning(f"**Legende (Abgenutzt):** `{res['Legende_Status']}`")
+        else:
+             st.write(f"**Legende (Gelesen):** `{res['Legende_Status']}`")
         st.info(f"**Beweisführung:** {res['Analyse']}")
 
     # Profi-Links
