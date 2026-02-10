@@ -4,109 +4,93 @@ from PIL import Image, ImageOps, ImageFilter
 import json
 import urllib.parse
 
-# --- 1. SETUP ---
-st.set_page_config(page_title="MuenzID Universal", layout="wide")
-st.title("🪙 Münz-Detektiv: Universal")
+# --- SETUP ---
+st.set_page_config(page_title="MuenzID - Feature Scan", layout="wide")
+st.title("🪙 Münz-Detektiv: Fakten-Check")
 
-# Session State
 if "ppi" not in st.session_state:
     st.session_state.ppi = 160.0
 if "result" not in st.session_state:
     st.session_state.result = None
 
-# API Client (Gemma 3 27B)
+# API: Gemma 3 27B (Hohes Quota)
 if "GOOGLE_API_KEY" in st.secrets:
     client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
 else:
     st.error("🔑 API-Key fehlt!")
     st.stop()
 
-# --- 2. OPTIONALE KALIBRIERUNG ---
-st.header("1. Messung (Optional)")
+# --- 1. KALIBRIERUNG (Optional, aber empfohlen) ---
+st.header("1. Größen-Check (Wichtig für Filter)")
+use_diameter = st.toggle("📏 Messung aktiv", value=True)
 
-# Der Umschalter für den Foto-Modus
-use_diameter = st.toggle("📏 Physische Messung verwenden (Genauer)", value=True)
-
-mm_prompt_text = "UNBEKANNT (Nur Foto-Analyse)"
-mm_logic_instruction = "Bestimme den Typ rein visuell anhand von Proportionen und Schrift."
-
+mm_text = "Unbekannt"
 if use_diameter:
-    st.info("Lege die Münze auf das Display für maximale Präzision.")
-    
-    col_cal1, col_cal2 = st.columns([3, 1])
-    with col_cal1:
-        size_px = st.slider("Kreisgröße", 100, 800, 300)
-    
-    with col_cal2:
-        st.write("Kalibrieren:")
-        c1, c2 = st.columns(2)
-        if c1.button("1 €", use_container_width=True):
+    size_px = st.slider("Kreisgröße", 100, 800, 300)
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("📍 1 € (23.25mm)", use_container_width=True):
             st.session_state.ppi = (size_px / 23.25) * 25.4
-            st.toast("1€ Kalibriert")
-        if c2.button("2 €", use_container_width=True):
+    with col2:
+        if st.button("📍 2 € (25.75mm)", use_container_width=True):
             st.session_state.ppi = (size_px / 25.75) * 25.4
-            st.toast("2€ Kalibriert")
-
-    # Berechnung
-    mm_ist = (size_px / st.session_state.ppi) * 25.4
-    st.metric("Gemessener Durchmesser", f"{mm_ist:.2f} mm")
     
-    # Visueller Kreis
+    mm_ist = (size_px / st.session_state.ppi) * 25.4
+    st.metric("Durchmesser", f"{mm_ist:.2f} mm")
+    mm_text = f"{mm_ist:.1f} mm"
+    
+    # Roter Kreis
     st.markdown(f"""
-        <div style="display: flex; justify-content: center; padding: 10px; background: #111; border-radius: 10px; margin-bottom: 20px;">
-            <div style="width:{size_px}px; height:{size_px}px; border:4px solid gold; border-radius:50%; display: flex; align-items: center; justify-content: center;">
-                <div style="width: 5px; height: 5px; background: red; border-radius: 50%;"></div>
-            </div>
+        <div style="display: flex; justify-content: center; padding: 10px; background: #222; border-radius: 10px;">
+            <div style="width:{size_px}px; height:{size_px}px; border:4px solid gold; border-radius:50%; display: flex; align-items: center; justify-content: center;"></div>
         </div>
     """, unsafe_allow_html=True)
-    
-    # Prompt-Daten setzen
-    mm_prompt_text = f"{mm_ist:.1f} mm"
-    mm_logic_instruction = f"Nutze den Durchmesser von {mm_ist:.1f}mm als HARTEN FILTER. Schließe Münzen aus, die deutlich größer/kleiner sind."
 
-else:
-    st.warning("⚠️ Ohne Messung kann die KI Größenverhältnisse (z.B. 10 vs 20 Kreuzer) nur schätzen.")
-
-# --- 3. ANALYSE ---
-st.header("2. Identifikation")
+# --- 2. ANALYSE ---
+st.header("2. Merkmale erkennen & Suchen")
 uploaded_file = st.file_uploader("Bild hochladen", type=["jpg", "jpeg", "png"])
 
 if uploaded_file:
+    # Original (Farbe) für Material
     raw_img = Image.open(uploaded_file)
-    st.image(raw_img, caption="Originalbild (Farbe)", width=400)
+    st.image(raw_img, caption="Original", width=350)
 
-    if st.button("🚀 Analyse starten", use_container_width=True):
-        with st.status("Analysiere Merkmale & Datenbanken...") as status:
+    if st.button("🚀 Merkmale scannen & Bestimmen", use_container_width=True):
+        with st.status("Analysiere Material & Buchstaben...") as status:
             
             prompt = f"""
-            Du bist ein professioneller Numismatiker.
-            Deine Aufgabe: Bestimme die Münze basierend auf den verfügbaren Fakten.
+            Du bist ein numismatischer Assistent.
+            Durchmesser: {mm_text}.
             
-            GEGEBENE FAKTEN:
-            1. DURCHMESSER: {mm_prompt_text}
+            AUFGABE: Erstelle ein Profil der Münze basierend auf Fakten. Raten ist verboten.
+
+            SCHRITT 1: MATERIAL (Schau auf das Farbbild!)
+            - Gelb/Goldig -> Gold oder Messing
+            - Grau/Silbrig -> Silber, Zink oder Alu
+            - Rot/Braun -> Kupfer oder Bronze
             
-            ANALYSE-LOGIK:
-            1. MATERIAL-SCAN (Farbbild):
-               - Gelb -> Gold/Messing
-               - Grau/Weiß -> Silber/Zink/Nickel
-               - Rot/Braun -> Kupfer/Bronze
+            SCHRITT 2: SCANNE BUCHSTABEN & SYMBOLE (OCR)
+            - Welche Buchstaben sind SICHTBAR? (z.B. "F", "I", "3", "S", "REPUBLIK", "SIGISMUND")
+            - Welches Motiv? (Adler, Wappen, Kopf, Stehende Figur, Kreuz)
             
-            2. VISUELLE ERKENNUNG:
-               - Motiv (Adler, Kopf, Wappen, Figur).
-               - Text/Legende (OCR).
+            SCHRITT 3: SCHLUSSFOLGERUNG
+            - Kombiniere Material + Größe + Buchstaben.
+            - "F" + "I" + 20mm + Silber = Ferdinand I (3 Kreuzer).
+            - "S" + "1" + 25mm + Silber/Alu = Österreich Schilling.
+            - "Gold" + "Stehender König" + 20mm = Ungarn Goldgulden.
             
-            3. MATCHING-REGEL:
-               - {mm_logic_instruction}
-               - Falls Durchmesser UNBEKANNT: Nenne den wahrscheinlichsten Typ, aber weise auf mögliche Größenvarianten hin.
+            SCHRITT 4: SUCH-LINK GENERIERUNG
+            - Erstelle Keywords für eine Google-Suche, die NICHT zu spezifisch sind.
+            - Format: "Coin [Land] [Wert] [Wichtiges Merkmal]"
 
             Antworte NUR als JSON:
             {{
-              "Land": "Land / Region",
-              "Nominal": "Wert (z.B. 1 Dukat)",
-              "Jahr_Zeitraum": "Jahr oder Epoche",
               "Material": "Erkanntes Metall",
-              "Suchbegriff": "Optimierter Suchstring für Numista",
-              "Begruendung": "Warum ist es diese Münze?"
+              "Sichtbare_Zeichen": "Liste der Buchstaben/Zahlen",
+              "Motiv_Beschreibung": "Was ist drauf?",
+              "Bestimmungs_Versuch": "Wahrscheinlichstes Land & Nominal",
+              "Such_Keywords": "3-4 Stichworte für die Suche (z.B. 'Coin Austria 1 Schilling Sower' oder 'Coin Groschen F I')",
+              "Warnung": "Falls unsicher"
             }}
             """
             
@@ -116,43 +100,44 @@ if uploaded_file:
                     contents=[prompt, raw_img]
                 )
                 
-                txt = response.text
-                if "```json" in txt:
-                    txt = txt.replace("```json", "").replace("```", "")
-                
-                start = txt.find('{')
-                end = txt.rfind('}') + 1
-                
-                if start != -1 and end != -1:
-                    st.session_state.result = json.loads(txt[start:end])
-                    status.update(label="Gefunden!", state="complete")
-                else:
-                    st.error("Datenbank-Antwort unleserlich.")
+                txt = response.text.replace("```json", "").replace("```", "")
+                res = json.loads(txt[txt.find('{'):txt.rfind('}')+1])
+                st.session_state.result = res
+                status.update(label="Fertig!", state="complete")
             except Exception as e:
                 st.error(f"Fehler: {e}")
 
-# --- 4. ERGEBNIS ---
+# --- 3. ERGEBNIS ---
 if st.session_state.result:
-    res = st.session_state.result
+    r = st.session_state.result
     st.divider()
     
+    # Zeige erst die FAKTEN, dann das ERGEBNIS
     c1, c2 = st.columns(2)
     with c1:
-        st.success(f"**{res.get('Land')}**")
-        st.metric("Nominal", res.get('Nominal'))
-        st.info(f"Material: {res.get('Material')}")
+        st.info(f"**Material:** {r.get('Material')}")
+        st.write(f"**Zeichen:** `{r.get('Sichtbare_Zeichen')}`")
+        st.write(f"**Motiv:** {r.get('Motiv_Beschreibung')}")
     with c2:
-        st.write(f"**Zeit:** {res.get('Jahr_Zeitraum')}")
-        st.caption(f"Analyse: {res.get('Begruendung')}")
+        st.success(f"**Bestimmung:** {r.get('Bestimmungs_Versuch')}")
+        st.caption(f"Status: {r.get('Warnung', 'OK')}")
+
+    # DER SICHERE LINK
+    # Wir suchen nach den Keywords, nicht nach dem exakten Namen. Das bringt bessere Treffer.
+    keywords = r.get('Such_Keywords', f"{r.get('Bestimmungs_Versuch')} coin")
+    q = urllib.parse.quote(keywords)
     
-    # Link Generator
-    s_term = res.get('Suchbegriff', f"{res.get('Land')} {res.get('Nominal')}")
-    q = urllib.parse.quote(s_term)
+    st.markdown("### 🔎 Eigene Prüfung starten")
+    st.markdown(f"Das Ergebnis oben kann falsch sein. Prüfe diese Bilder:")
     
-    st.markdown("### 🔎 Referenzen")
-    st.markdown(f"👉 [**Numista Datenbank**](https://en.numista.com/catalogue/index.php?q={q})")
-    st.markdown(f"👉 [**MA-Shops Handel**](https://www.ma-shops.de/result.php?searchstr={q})")
+    col_l1, col_l2 = st.columns(2)
+    # Breitere Suche bei Google Bilder (visueller Vergleich)
+    col_l1.markdown(f"👉 [**Google Bilder Vergleich**](https://www.google.com/search?q={q}&tbm=isch)")
+    # Spezifische Suche bei Numista
+    col_l2.markdown(f"👉 [**Numista Datenbank**](https://en.numista.com/catalogue/index.php?q={q})")
     
-    if st.button("Neu Starten"):
+    st.write(f"*Genutzter Suchbegriff:* `{keywords}`")
+    
+    if st.button("Neu"):
         st.session_state.result = None
         st.rerun()
