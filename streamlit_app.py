@@ -5,80 +5,116 @@ import json
 import urllib.parse
 import io
 
-# --- SETUP ---
-st.set_page_config(page_title="MuenzID Pro - Expert Modus", layout="wide")
+# --- SETUP & SESSION STATE ---
+st.set_page_config(page_title="MuenzID Pro - Expert", layout="wide")
+st.title("🪙 Münz-Detektiv: Forensische Analyse")
 
-if "analysis_result" not in st.session_state:
-    st.session_state.analysis_result = None
+# Initialisierung des Gedächtnisses
+if "ppi" not in st.session_state:
+    st.session_state.ppi = 160.0
+if "result" not in st.session_state:
+    st.session_state.result = None
 
-# Client Setup
-client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
+# API Client Initialisierung (Gemma 3)
+if "GOOGLE_API_KEY" in st.secrets:
+    client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
+else:
+    st.error("🔑 API-Key fehlt in den Secrets!")
+    st.stop()
 
-# --- 1. KALIBRIERUNG (Unverändert wichtig für mm-Bestimmung) ---
-st.header("📏 1. Kalibrierung")
-size_px = st.slider("Kreisgröße", 100, 800, 300)
-# (Kalibrierungs-Logik wie zuvor...)
+# --- 1. KALIBRIERUNG & MESSUNG ---
+st.header("📏 1. Physische Kalibrierung")
+st.info("Lege eine 1€ oder 2€ Münze auf das Display und stelle den Kreis passgenau ein.")
 
-# --- 2. BILD-OPTIMIERUNG (Der Kern der Verbesserung) ---
+size_px = st.slider("Kreisgröße (Pixel)", 100, 800, 300)
+
+c1, c2 = st.columns(2)
+with c1:
+    if st.button("📍 Kalibrieren 1 € (23.25 mm)", use_container_width=True):
+        st.session_state.ppi = (size_px / 23.25) * 25.4
+        st.toast("Kalibrierung auf 1 € gespeichert!")
+with c2:
+    if st.button("📍 Kalibrieren 2 € (25.75 mm)", use_container_width=True):
+        st.session_state.ppi = (size_px / 25.75) * 25.4
+        st.toast("Kalibrierung auf 2 € gespeichert!")
+
+mm_ist = (size_px / st.session_state.ppi) * 25.4
+st.metric("Gemessener Durchmesser", f"{mm_ist:.2f} mm")
+
+# Unveränderlicher Mittelpunkt für die physische Münze
+st.markdown(f"""
+    <div style="display: flex; justify-content: center; padding: 30px; background: #0e1117; border-radius: 15px; border: 1px solid #333;">
+        <div style="width:{size_px}px; height:{size_px}px; border:6px solid gold; border-radius:50%; display: flex; align-items: center; justify-content: center; position: relative;">
+            <div style="width: 10px; height: 10px; background: #ff4b4b; border-radius: 50%; position: absolute;"></div>
+        </div>
+    </div>
+""", unsafe_allow_html=True)
+
+# --- 2. HIERARCHISCHE ANALYSE ---
 st.header("🔍 2. Bild-Analyse")
-uploaded_file = st.file_uploader("Münzbild (auch schlechte Qualität)", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Münzbild hochladen (Bodenfunde/Abgenutzt erlaubt)", type=["jpg", "jpeg", "png"])
 
 if uploaded_file:
     raw_img = Image.open(uploaded_file)
     
-    # --- SPEZIAL-FILTER FÜR SCHLECHTE BILDER ---
-    # Schritt A: Graustufen & Normalisierung (Entfernt Farbrauschen)
+    # --- FORENSISCHE BILD-OPTIMIERUNG ---
+    # 1. Graustufen zur Rauschreduzierung
     proc = ImageOps.grayscale(raw_img)
-    proc = ImageOps.autocontrast(proc, cutoff=2) # Spreizt die Helligkeit
+    # 2. Autocontrast zur Spreizung des Histogramms
+    proc = ImageOps.autocontrast(proc, cutoff=2)
+    # 3. Aggressive Kanten-Schärfung (Unsharp Mask) für OCR-Verbesserung
+    proc = proc.filter(ImageFilter.UnsharpMask(radius=2, percent=200, threshold=3))
     
-    # Schritt B: Kanten-Verstärkung (Findet Relief-Strukturen)
-    # Wir nutzen einen Unsharp-Mask-Effekt für die "Knochen" der Münze
-    proc = proc.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
-    
-    # Schritt C: Lokale Kontrast-Anhebung
-    proc = ImageEnhance.Contrast(proc).enhance(1.8)
+    st.image([raw_img, proc], caption=["Originalbild", "Forensik-Filter (Struktur-Fokus)"], width=400)
 
-    st.image([raw_img, proc], caption=["Original", "KI-Optimiert (Struktur-Fokus)"], width=400)
-
-    if st.button("🚀 Systematische Bestimmung starten"):
-        with st.status("Extrahiere Details aus abgenutzter Oberfläche...") as status:
-            
+    if st.button("🚀 Systematische Bestimmung starten", use_container_width=True):
+        with st.status("Analysiere Details der Details...") as status:
             prompt = f"""
-            Du bist ein numismatischer Forensiker. Die Münze ist stark abgenutzt.
-            Durchmesser: {mm_ist:.1f} mm.
+            Analysiere diese Münze streng hierarchisch. Durchmesser: {mm_ist:.1f} mm.
 
-            DEIN ARBEITSABLAUF:
-            1. SILHOUETTEN-CHECK: Ignoriere Schatten, suche nach Umrissen. (z.B. Schreitende Person, Adler-Symmetrie).
-            2. RELIEF-RELIKTE: Suche nach einzelnen Buchstabenresten (S, G, K, R) oder Zahlen (1, 2, 5, 10).
-            3. NEGATIV-AUSSCHLUSS: Wenn du eine '1' siehst und das Bild aus Österreich kommt, prüfe ob daneben ein 'S' (Schilling) oder 'G' (Groschen) sein könnte, auch wenn nur Schatten da sind.
-            4. KEINE HALLUZINATION: Beschreibe nur Formen. Wenn ein Arm wie ein 'Alpenhorn' aussieht, prüfe ob es ein 'Sämann' (Sower) sein könnte.
+            REGEL: Sei ehrlich. Wenn Legenden unleserlich sind, schreibe [unleserlich]. Erfinde nichts!
 
-            Antworte als JSON:
+            STUFE 1: MOTIV-IDENTIFIKATION
+            Bestimme das Hauptmotiv (z.B. Wappen, Adler, Kopf, stehende Figur/Sämann). 
+
+            STUFE 2: STRUKTUR-ANALYSE
+            - Wappen: Teilung (geviertelt?), Wappeninhalte exakt prüfen (z.B. Löwen, Balken).
+            - Kopf/Figur: Blickrichtung? Haltung? (Bsp: Schreitender Mann, der Saatgut verstreut).
+
+            STUFE 3: FEIN-DETAILS
+            - Accessoires: Was wird gehalten (Zepter, Reichsapfel, Kind, Sichel, Hammer)?
+            - Merkmale: Bart, Brille, Haarlänge, Krone?
+            - Such-Fokus: Suche bei Zahlen wie '1' explizit nach Begleitbuchstaben (S, G, K).
+
+            STUFE 4: LEGENDE & KONTEXT
+            Transkribiere Buchstaben rundherum. Verknüpfe gelesene Fragmente mit dem Motiv.
+
+            Antworte AUSSCHLIESSLICH im JSON-Format:
             {{
-              "Bestimmung": "Land, Nominal, Ära",
-              "Motiv_Struktur": "Genaue Beschreibung der Umrisse",
-              "Gelesene_Fragmente": "Was ist sicher, was ist vermutet?",
-              "Handels_Keywords": "Präzise Suchbegriffe für abgenutzte Stücke",
-              "Analyse": "Warum passt das zu {mm_ist:.1f} mm?"
+              "Bestimmung": "Land, Nominal, Jahr/Herrscher",
+              "Struktur_Details": "Beschreibung des Motivs und der Haltung",
+              "Feinheiten": "Liste aller Accessoires und Wappensymbole",
+              "Legende": "Gelesene Fragmente oder [unleserlich]",
+              "Handels_Keywords": "Numismatische Fachbegriffe für Profi-Suche",
+              "Analyse": "Beweisführung basierend auf Durchmesser {mm_ist:.1f}mm"
             }}
             """
-            
-            # Sende das optimierte Bild (proc) an die KI
-            response = client.models.generate_content(
-                model="gemma-3-27b-it",
-                contents=[prompt, proc]
-            )
-            
-            # (JSON Parsing & Anzeige wie gehabt...)
-
+            try:
+                # Sende das optimierte Forensik-Bild
+                response = client.models.generate_content(
+                    model="gemma-3-27b-it",
+                    contents=[prompt, proc]
+                )
                 
+                # JSON-Parsing (Fix für Indentation/Extra-Text)
                 txt = response.text
-                start, end = txt.find('{'), txt.rfind('}') + 1
+                start = txt.find('{')
+                end = txt.rfind('}') + 1
                 st.session_state.result = json.loads(txt[start:end])
+                
                 status.update(label="Analyse abgeschlossen!", state="complete")
             except Exception as e:
-                st.error(f"Fehler: {e}")
-                st.write(response.text if 'response' in locals() else "Keine API-Antwort.")
+                st.error(f"Fehler bei der API-Analyse: {e}")
 
 # --- 3. ERGEBNIS-ANZEIGE ---
 if st.session_state.result:
@@ -87,27 +123,23 @@ if st.session_state.result:
     
     col_a, col_b = st.columns(2)
     with col_a:
-        st.success(f"**Bestimmung:** {res['Bestimmung']}")
-        st.write(f"**Motiv & Struktur:** {res['Motiv_Struktur']}")
-        st.write(f"**Details:** {res['Fein_Details']}")
+        st.success(f"**Bestimmung:** {res.get('Bestimmung', 'Unbekannt')}")
+        st.write(f"**Motiv-Struktur:** {res.get('Struktur_Details', '-')}")
+        st.write(f"**Feinheiten:** {res.get('Feinheiten', '-')}")
     with col_b:
-        # Anzeige ändert sich je nach Lesbarkeit
-        if "[unleserlich]" in res['Legende_Status']:
-             st.warning(f"**Legende (Abgenutzt):** `{res['Legende_Status']}`")
-        else:
-             st.write(f"**Legende (Gelesen):** `{res['Legende_Status']}`")
-        st.info(f"**Beweisführung:** {res['Analyse']}")
+        st.write(f"**Gelesene Legende:** `{res.get('Legende', '-')}`")
+        st.info(f"**Forensische Analyse:** {res.get('Analyse', '-')}")
 
     # Profi-Links
-    st.subheader("🔗 Verifikation")
-    search_q = f"{res['Bestimmung']} {res['Handels_Keywords']} {mm_ist:.1f}mm"
+    st.subheader("🔗 Verifikation & Handel")
+    search_q = f"{res.get('Bestimmung', '')} {res.get('Handels_Keywords', '')} {mm_ist:.1f}mm"
     q_enc = urllib.parse.quote(search_q)
     
     l1, l2, l3 = st.columns(3)
-    l1.markdown(f"[📚 Numista Check](https://en.numista.com/catalogue/index.php?q={q_enc})")
-    l2.markdown(f"[💰 MA-Shops Suche](https://www.ma-shops.de/result.php?searchstr={q_enc})")
-    l3.markdown(f"[🖼️ Google Bilder](https://www.google.com/search?q={q_enc}&tbm=isch)")
-    
-    if st.button("🗑️ Neue Analyse starten"):
+    l1.markdown(f"[📚 Numista Datenbank](https://en.numista.com/catalogue/index.php?q={q_enc})")
+    l2.markdown(f"[💰 MA-Shops Handel](https://www.ma-shops.de/result.php?searchstr={q_enc})")
+    l3.markdown(f"[🖼️ Google Bild-Abgleich](https://www.google.com/search?q={q_enc}&tbm=isch)")
+
+    if st.button("🗑️ Neue Analyse"):
         st.session_state.result = None
         st.rerun()
