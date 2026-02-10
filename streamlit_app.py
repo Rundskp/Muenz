@@ -1,96 +1,101 @@
 import streamlit as st
 from google import genai
-from PIL import Image, ImageOps, ImageFilter
-import json
+from PIL import Image, ImageStat
 import urllib.parse
+import json
 
 # --- SETUP ---
-st.set_page_config(page_title="MuenzID - Feature Scan", layout="wide")
-st.title("🪙 Münz-Detektiv: Fakten-Check")
+st.set_page_config(page_title="MuenzID Ultimate", layout="wide")
+st.title("🪙 Münz-Detektiv: Hybrid-Engine")
 
-if "ppi" not in st.session_state:
-    st.session_state.ppi = 160.0
 if "result" not in st.session_state:
     st.session_state.result = None
 
-# API: Gemma 3 27B (Hohes Quota)
+# API: Gemma 3 27B (Hohes Limit, schlaues Modell)
 if "GOOGLE_API_KEY" in st.secrets:
     client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
 else:
     st.error("🔑 API-Key fehlt!")
     st.stop()
 
-# --- 1. KALIBRIERUNG (Optional, aber empfohlen) ---
-st.header("1. Größen-Check (Wichtig für Filter)")
-use_diameter = st.toggle("📏 Messung aktiv", value=True)
+# --- 1. ALGORITHMISCHE MATERIAL-ANALYSE (Mathematik statt KI) ---
+def analyze_material_math(img):
+    # Bild verkleinern für Speed
+    small = img.resize((150, 150))
+    # In HSV konvertieren (Hue, Saturation, Value)
+    hsv = small.convert("HSV")
+    
+    # Durchschnittswerte berechnen
+    stat = ImageStat.Stat(hsv)
+    avg_hue = stat.mean[0]        # Farbton (0-255)
+    avg_sat = stat.mean[1]        # Sättigung (0-255)
+    avg_bri = stat.mean[2]        # Helligkeit (0-255)
+    
+    # Logik: Silber/Zink/Nickel hat SEHR wenig Sättigung
+    if avg_sat < 40: 
+        return "Silber / Zink / Nickel (Grau)", "grey"
+    
+    # Wenn Sättigung hoch ist -> Farbe prüfen
+    # Hue ca 20-50 ist Gelb/Orange
+    if 15 < avg_hue < 50:
+        return "Gold / Messing (Gelb)", "gold"
+    
+    # Hue < 15 oder > 240 ist oft Rot/Kupfer
+    if avg_hue < 15 or avg_hue > 230:
+        return "Kupfer / Bronze (Rot)", "copper"
+    
+    return "Unbestimmtes Metall", "unknown"
 
-mm_text = "Unbekannt"
+# --- UI ---
+st.header("Analyse starten")
+use_diameter = st.toggle("📏 Durchmesser Filter (Optional)", value=False)
+mm_val = "Unbekannt"
+
 if use_diameter:
-    size_px = st.slider("Kreisgröße", 100, 800, 300)
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("📍 1 € (23.25mm)", use_container_width=True):
-            st.session_state.ppi = (size_px / 23.25) * 25.4
-    with col2:
-        if st.button("📍 2 € (25.75mm)", use_container_width=True):
-            st.session_state.ppi = (size_px / 25.75) * 25.4
-    
-    mm_ist = (size_px / st.session_state.ppi) * 25.4
-    st.metric("Durchmesser", f"{mm_ist:.2f} mm")
-    mm_text = f"{mm_ist:.1f} mm"
-    
-    # Roter Kreis
-    st.markdown(f"""
-        <div style="display: flex; justify-content: center; padding: 10px; background: #222; border-radius: 10px;">
-            <div style="width:{size_px}px; height:{size_px}px; border:4px solid gold; border-radius:50%; display: flex; align-items: center; justify-content: center;"></div>
-        </div>
-    """, unsafe_allow_html=True)
+    size_px = st.slider("Größe", 100, 800, 300)
+    if st.button("Kalibrieren 1€ (23.25mm)"):
+        st.session_state.ppi = (size_px / 23.25) * 25.4
+    if "ppi" in st.session_state:
+        mm = (size_px / st.session_state.ppi) * 25.4
+        st.caption(f"Wert: {mm:.1f} mm")
+        mm_val = f"{mm:.1f}mm"
 
-# --- 2. ANALYSE ---
-st.header("2. Merkmale erkennen & Suchen")
 uploaded_file = st.file_uploader("Bild hochladen", type=["jpg", "jpeg", "png"])
 
 if uploaded_file:
-    # Original (Farbe) für Material
     raw_img = Image.open(uploaded_file)
-    st.image(raw_img, caption="Original", width=350)
+    
+    # 1. SOFORTIGE MATERIAL-BERECHNUNG (Vor der KI)
+    mat_name, mat_code = analyze_material_math(raw_img)
+    
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        st.image(raw_img, caption="Original", width=250)
+    with c2:
+        st.info(f"🧬 **Material-Scan (Math):** {mat_name}")
+        st.caption("Basierend auf Pixel-Sättigung, nicht KI-Raten.")
 
-    if st.button("🚀 Merkmale scannen & Bestimmen", use_container_width=True):
-        with st.status("Analysiere Material & Buchstaben...") as status:
+    if st.button("🚀 Scannen & 'Google-Dork' Link bauen", use_container_width=True):
+        with st.status("Extrahiere Text für Präzisions-Suche...") as status:
             
+            # Der Prompt fragt NICHT nach dem Namen, sondern nur nach Text für die Suche
             prompt = f"""
-            Du bist ein numismatischer Assistent.
-            Durchmesser: {mm_text}.
+            Du bist ein OCR-Scanner für Münzen.
             
-            AUFGABE: Erstelle ein Profil der Münze basierend auf Fakten. Raten ist verboten.
-
-            SCHRITT 1: MATERIAL (Schau auf das Farbbild!)
-            - Gelb/Goldig -> Gold oder Messing
-            - Grau/Silbrig -> Silber, Zink oder Alu
-            - Rot/Braun -> Kupfer oder Bronze
+            DEINE AUFGABE:
+            Lies JEDEN lesbaren Buchstaben auf der Münze. Sei präzise.
+            Ignoriere das Material (das wurde bereits extern bestimmt: {mat_name}).
             
-            SCHRITT 2: SCANNE BUCHSTABEN & SYMBOLE (OCR)
-            - Welche Buchstaben sind SICHTBAR? (z.B. "F", "I", "3", "S", "REPUBLIK", "SIGISMUND")
-            - Welches Motiv? (Adler, Wappen, Kopf, Stehende Figur, Kreuz)
-            
-            SCHRITT 3: SCHLUSSFOLGERUNG
-            - Kombiniere Material + Größe + Buchstaben.
-            - "F" + "I" + 20mm + Silber = Ferdinand I (3 Kreuzer).
-            - "S" + "1" + 25mm + Silber/Alu = Österreich Schilling.
-            - "Gold" + "Stehender König" + 20mm = Ungarn Goldgulden.
-            
-            SCHRITT 4: SUCH-LINK GENERIERUNG
-            - Erstelle Keywords für eine Google-Suche, die NICHT zu spezifisch sind.
-            - Format: "Coin [Land] [Wert] [Wichtiges Merkmal]"
+            1. Transkribiere die Legende (Umschrift). 
+               Beispiel: "ARCHID AVST DVX BOHEMIAE" oder "REPUBLIK ÖSTERREICH".
+            2. Suche nach Jahreszahlen (z.B. 1620, 1957).
+            3. Beschreibe das Wappen kurz (z.B. "Adler", "Löwe").
 
             Antworte NUR als JSON:
             {{
-              "Material": "Erkanntes Metall",
-              "Sichtbare_Zeichen": "Liste der Buchstaben/Zahlen",
-              "Motiv_Beschreibung": "Was ist drauf?",
-              "Bestimmungs_Versuch": "Wahrscheinlichstes Land & Nominal",
-              "Such_Keywords": "3-4 Stichworte für die Suche (z.B. 'Coin Austria 1 Schilling Sower' oder 'Coin Groschen F I')",
-              "Warnung": "Falls unsicher"
+                "Exakter_Text": "Der gelesene Text",
+                "Such_String": "Nur die klarsten 3-4 Wörter für eine Google Suche (z.B. 'ARCHID AVST DVX')",
+                "Motiv": "Kurzbeschreibung"
             }}
             """
             
@@ -103,40 +108,45 @@ if uploaded_file:
                 txt = response.text.replace("```json", "").replace("```", "")
                 res = json.loads(txt[txt.find('{'):txt.rfind('}')+1])
                 st.session_state.result = res
+                st.session_state.mat_result = mat_name # Speichere das Mathe-Ergebnis
                 status.update(label="Fertig!", state="complete")
             except Exception as e:
                 st.error(f"Fehler: {e}")
 
-# --- 3. ERGEBNIS ---
+# --- ERGEBNIS ---
 if st.session_state.result:
     r = st.session_state.result
+    mat = st.session_state.mat_result
     st.divider()
     
-    # Zeige erst die FAKTEN, dann das ERGEBNIS
+    st.write(f"**Gelesener Text:** `{r.get('Exakter_Text')}`")
+    st.write(f"**Motiv:** {r.get('Motiv')}")
+    
+    # DER PERFEKTE SUCHERGEBNIS-LINK ("Google Dorking")
+    # Wir bauen eine Suche, die NUR auf Numista sucht und das Material erzwingt.
+    # Syntax: site:en.numista.com "SUCHWORTE" metal_type
+    
+    search_keywords = r.get('Such_String')
+    
+    # Bestimme englisches Materialwort für die Suche
+    metal_search = "Silver" if "Silber" in mat else "Gold" if "Gold" in mat else "Copper"
+    
+    # Der Trick: Wir suchen spezifisch auf der besten Datenbank der Welt
+    query_numista = f'site:en.numista.com "{search_keywords}" {metal_search}'
+    link_numista = f"https://www.google.com/search?q={urllib.parse.quote(query_numista)}"
+    
+    # Fallback: Google Bildersuche
+    query_google = f'{search_keywords} coin {metal_search} {mm_val if "Unbekannt" not in mm_val else ""}'
+    link_google = f"https://www.google.com/search?q={urllib.parse.quote(query_google)}&tbm=isch"
+    
+    st.markdown("### 🎯 Ergebnis-Treffer")
+    st.success("Klicke hier für die exakte Bestimmung:")
+    
     c1, c2 = st.columns(2)
-    with c1:
-        st.info(f"**Material:** {r.get('Material')}")
-        st.write(f"**Zeichen:** `{r.get('Sichtbare_Zeichen')}`")
-        st.write(f"**Motiv:** {r.get('Motiv_Beschreibung')}")
-    with c2:
-        st.success(f"**Bestimmung:** {r.get('Bestimmungs_Versuch')}")
-        st.caption(f"Status: {r.get('Warnung', 'OK')}")
-
-    # DER SICHERE LINK
-    # Wir suchen nach den Keywords, nicht nach dem exakten Namen. Das bringt bessere Treffer.
-    keywords = r.get('Such_Keywords', f"{r.get('Bestimmungs_Versuch')} coin")
-    q = urllib.parse.quote(keywords)
+    c1.markdown(f"👉 [**Exakter Datenbank-Match (Numista)**]({link_numista})")
+    c2.markdown(f"👉 [**Visueller Vergleich (Google Bilder)**]({link_google})")
     
-    st.markdown("### 🔎 Eigene Prüfung starten")
-    st.markdown(f"Das Ergebnis oben kann falsch sein. Prüfe diese Bilder:")
-    
-    col_l1, col_l2 = st.columns(2)
-    # Breitere Suche bei Google Bilder (visueller Vergleich)
-    col_l1.markdown(f"👉 [**Google Bilder Vergleich**](https://www.google.com/search?q={q}&tbm=isch)")
-    # Spezifische Suche bei Numista
-    col_l2.markdown(f"👉 [**Numista Datenbank**](https://en.numista.com/catalogue/index.php?q={q})")
-    
-    st.write(f"*Genutzter Suchbegriff:* `{keywords}`")
+    st.caption(f"Generierter Such-Code: `{query_numista}`")
     
     if st.button("Neu"):
         st.session_state.result = None
